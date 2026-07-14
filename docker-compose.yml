@@ -1,0 +1,28 @@
+version: '3.9'
+services:
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+  api-gateway:
+    build: ./api-gateway
+    ports:
+      - "8080:8080"
+  auth-service:
+    build: ./auth-service
+  user-service:
+    build: ./user-service
+  organization-service:
+    build: ./organization-service
+  document-service:
+    build: ./document-service
+  validation-service:
+    build: ./validation-service
+  search-service:
+    build: ./search-service
+  notification-service:
+    build: ./notification-service
+  chatbot-service:
+    build: ./chatbot-service
+  stats-service:
+    build: ./stats-service
