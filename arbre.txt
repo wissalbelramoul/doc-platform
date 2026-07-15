@@ -1,0 +1,37 @@
+Structure du dossier
+Le num‚ro de s‚rie du volume est CAA9-5BDF
+C:.
+³   arbre.txt
+³   docker-compose.yml
+³   README.md
+³   
+ÃÄÄÄapi-gateway
+³       .gitkeep
+³       
+ÃÄÄÄauth-service
+³       .gitkeep
+³       
+ÃÄÄÄchatbot-service
+³       .gitkeep
+³       
+ÃÄÄÄdocument-service
+³       .gitkeep
+³       
+ÃÄÄÄfrontend
+³       .gitkeep
+³       
+ÃÄÄÄnotification-service
+³       .gitkeep
+³       
+ÃÄÄÄorganization-service
+³       .gitkeep
+³       
+ÃÄÄÄsearch-service
+³       .gitkeep
+³       
+ÃÄÄÄuser-service
+³       .gitkeep
+³       
+ÀÄÄÄvalidation-service
+        .gitkeep
+        
