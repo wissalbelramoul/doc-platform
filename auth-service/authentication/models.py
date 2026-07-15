@@ -1,36 +1,31 @@
-# Create youimport uuid
+import uuid
 from django.db import models
-from django.contrib.auth.hashers import make_password, check_password
 
 
 class AuthCredential(models.Model):
     """
-    Stocke uniquement les informations nécessaires à l'authentification.
-    Les informations métier (nom, rôle, service) vivent dans user-service.
-    Le lien entre les deux se fait via user_id (UUID partagé), sans FK physique.
+    Table de correspondance entre l'identité Active Directory (source de vérité
+    pour le mot de passe) et notre identifiant interne user_id (UUID) utilisé
+    dans tout le reste de l'architecture microservices.
+
+    Le mot de passe n'est JAMAIS stocké ici : il est vérifié en direct auprès
+    de l'AD à chaque connexion (voir ldap_service.py).
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user_id = models.UUIDField(unique=True, db_index=True)
-    email = models.EmailField(unique=True, db_index=True)
-    mot_de_passe_hash = models.CharField(max_length=255)
+    identifiant_ad = models.CharField(max_length=150, unique=True, db_index=True)
+    email = models.EmailField(unique=True, db_index=True, null=True, blank=True)
+    nom_complet = models.CharField(max_length=255, null=True, blank=True)
     actif = models.BooleanField(default=True)
     derniere_connexion = models.DateTimeField(null=True, blank=True)
-    tentatives_echouees = models.PositiveIntegerField(default=0)
-    verrouille_jusqu_a = models.DateTimeField(null=True, blank=True)
     date_creation = models.DateTimeField(auto_now_add=True)
     date_modification = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = "auth_credentials"
 
-    def set_password(self, raw_password):
-        self.mot_de_passe_hash = make_password(raw_password)
-
-    def check_password(self, raw_password):
-        return check_password(raw_password, self.mot_de_passe_hash)
-
     def __str__(self):
-        return self.email
+        return self.identifiant_ad
 
 
 class RefreshToken(models.Model):
@@ -80,4 +75,5 @@ class AuthHistory(models.Model):
         ordering = ["-date_action"]
 
     def __str__(self):
-        return f"{self.action} - {self.user_id} - {self.date_action}"r models here.
+        return f"{self.action} - {self.user_id} - {self.date_action}"
+    

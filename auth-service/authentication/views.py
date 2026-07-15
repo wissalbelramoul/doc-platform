@@ -1,5 +1,4 @@
 from django.utils import timezone
-from datetime import timedelta
 
 from rest_framework import status
 from rest_framework.views import APIView
@@ -10,11 +9,11 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from rest_framework_simplejwt.tokens import RefreshToken as SimpleJWTRefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
 
+import uuid
+
 from .models import AuthCredential, AuthHistory
 from .serializers import LoginSerializer, LogoutSerializer
-
-MAX_TENTATIVES = 5
-DUREE_VERROUILLAGE = timedelta(minutes=15)
+from .ldap_service import authenticate_against_ad, LDAPAuthenticationError, LDAPConnectionError
 
 
 def get_client_ip(request):
@@ -24,82 +23,77 @@ def get_client_ip(request):
 class LoginView(APIView):
     """
     POST /auth/login
-    Vérifie email/mot de passe, gère le verrouillage après échecs répétés,
-    retourne access + refresh token (RS256).
+    Vérifie l'identifiant/mot de passe directement auprès de l'Active
+    Directory Ooredoo. Si valide, crée (première connexion) ou retrouve
+    l'AuthCredential locale correspondante, puis émet les tokens JWT (RS256).
     """
     permission_classes = [AllowAny]
 
     def post(self, request):
-        email = request.data.get("email")
+        serializer = LoginSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        identifiant = serializer.validated_data["identifiant"]
+        password = serializer.validated_data["password"]
         ip = get_client_ip(request)
         user_agent = request.META.get("HTTP_USER_AGENT", "")
 
         try:
-            credential = AuthCredential.objects.get(email=email)
-        except AuthCredential.DoesNotExist:
-            credential = None
-
-        # Vérifier le verrouillage avant même de valider le mot de passe
-        if credential and credential.verrouille_jusqu_a and credential.verrouille_jusqu_a > timezone.now():
-            AuthHistory.objects.create(
-                user_id=credential.user_id, action="login_failed",
-                ip_adresse=ip, user_agent=user_agent,
-            )
+            ad_user = authenticate_against_ad(identifiant, password)
+        except LDAPAuthenticationError:
+            AuthHistory.objects.create(action="login_failed", ip_adresse=ip, user_agent=user_agent)
             return Response(
-                {"detail": "Compte temporairement verrouillé suite à trop de tentatives."},
-                status=status.HTTP_423_LOCKED,
+                {"detail": "Identifiant ou mot de passe incorrect."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+        except LDAPConnectionError:
+            return Response(
+                {"detail": "Service d'authentification temporairement indisponible. Réessayez plus tard."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
-        serializer = LoginSerializer(data=request.data)
-        if not serializer.is_valid():
-            if credential:
-                credential.tentatives_echouees += 1
-                if credential.tentatives_echouees >= MAX_TENTATIVES:
-                    credential.verrouille_jusqu_a = timezone.now() + DUREE_VERROUILLAGE
-                    AuthHistory.objects.create(
-                        user_id=credential.user_id, action="account_locked",
-                        ip_adresse=ip, user_agent=user_agent,
-                    )
-                credential.save()
-                AuthHistory.objects.create(
-                    user_id=credential.user_id, action="login_failed",
-                    ip_adresse=ip, user_agent=user_agent,
-                )
-            return Response(serializer.errors, status=status.HTTP_401_UNAUTHORIZED)
+        credential, created = AuthCredential.objects.get_or_create(
+            identifiant_ad=ad_user["identifiant"],
+            defaults={
+                "user_id": uuid.uuid4(),
+                "email": ad_user["email"],
+                "nom_complet": ad_user["nom_complet"],
+            },
+        )
 
-        credential = serializer.validated_data["credential"]
+        if not credential.actif:
+            AuthHistory.objects.create(
+                user_id=credential.user_id, action="login_failed", ip_adresse=ip, user_agent=user_agent,
+            )
+            return Response({"detail": "Ce compte est désactivé."}, status=status.HTTP_403_FORBIDDEN)
 
-        # Succès : réinitialiser les compteurs
-        credential.tentatives_echouees = 0
-        credential.verrouille_jusqu_a = None
         credential.derniere_connexion = timezone.now()
+        credential.email = ad_user["email"] or credential.email
+        credential.nom_complet = ad_user["nom_complet"] or credential.nom_complet
         credential.save()
 
-        # Génération des tokens RS256 — le user_id custom est injecté dans les claims
         refresh = SimpleJWTRefreshToken()
         refresh["user_id"] = str(credential.user_id)
-        refresh["email"] = credential.email
+        refresh["identifiant_ad"] = credential.identifiant_ad
         access = refresh.access_token
 
         AuthHistory.objects.create(
-            user_id=credential.user_id, action="login_success",
-            ip_adresse=ip, user_agent=user_agent,
+            user_id=credential.user_id, action="login_success", ip_adresse=ip, user_agent=user_agent,
         )
+
+        if created:
+            pass  # TODO: publier événement "UserFirstLogin" via RabbitMQ
 
         return Response({
             "access": str(access),
             "refresh": str(refresh),
             "user_id": str(credential.user_id),
+            "nouveau_compte": created,
         }, status=status.HTTP_200_OK)
 
 
 class CustomTokenRefreshView(TokenRefreshView):
-    """
-    POST /auth/refresh
-    Réutilise la vue standard de simplejwt (gère déjà la rotation
-    et le blacklist grâce à ROTATE_REFRESH_TOKENS=True).
-    Ajout d'une trace dans AuthHistory.
-    """
+    """POST /auth/refresh — inchangé, ne dépend pas de l'AD."""
 
     def post(self, request, *args, **kwargs):
         response = super().post(request, *args, **kwargs)
@@ -113,10 +107,7 @@ class CustomTokenRefreshView(TokenRefreshView):
 
 
 class LogoutView(APIView):
-    """
-    POST /auth/logout
-    Blackliste le refresh token fourni pour empêcher sa réutilisation.
-    """
+    """POST /auth/logout — inchangé, blackliste juste le refresh token local."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -139,16 +130,8 @@ class LogoutView(APIView):
 
 
 class VerifyTokenView(APIView):
-    """
-    POST /auth/verify
-    Endpoint interne : permet aux autres microservices ou à l'API Gateway
-    de vérifier un token — utile si vous ne distribuez pas la clé publique
-    partout, sinon la vérification RS256 peut se faire localement sans appel réseau.
-    """
+    """POST /auth/verify — inchangé."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        return Response({
-            "valid": True,
-            "user_id": str(request.user_id) if hasattr(request, "user_id") else None,
-        }, status=status.HTTP_200_OK)
+        return Response({"valid": True}, status=status.HTTP_200_OK)
