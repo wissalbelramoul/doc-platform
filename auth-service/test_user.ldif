@@ -1,0 +1,18 @@
+dn: ou=people,dc=ooredoo-test,dc=local
+objectClass: organizationalUnit
+ou: people
+
+dn: uid=s.testeur,ou=people,dc=ooredoo-test,dc=local
+objectClass: inetOrgPerson
+objectClass: posixAccount
+objectClass: shadowAccount
+uid: s.testeur
+sn: Testeur
+givenName: Sarah
+cn: Sarah Testeur
+displayName: Sarah Testeur
+uidNumber: 10000
+gidNumber: 5000
+userPassword: motdepasse123
+mail: s.testeur@ooredoo-test.local
+homeDirectory: /home/s.testeur
