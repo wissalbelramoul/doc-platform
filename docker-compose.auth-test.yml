@@ -1,0 +1,50 @@
+services:
+
+  auth-db:
+    image: postgres:15
+    container_name: auth-db
+    environment:
+      POSTGRES_DB: auth_db
+      POSTGRES_USER: ooredoo_user
+      POSTGRES_PASSWORD: ooredoo_pass
+    ports:
+      - "5433:5432"
+    volumes:
+      - auth_db_data:/var/lib/postgresql/data
+
+  test-ldap:
+    image: osixia/openldap:1.5.0
+    container_name: test-ldap
+    environment:
+      LDAP_ORGANISATION: "Ooredoo Test"
+      LDAP_DOMAIN: "ooredoo-test.local"
+      LDAP_ADMIN_PASSWORD: "admin123"
+    ports:
+      - "389:389"
+      - "636:636"
+
+  auth-service:
+    build: ./auth-service
+    container_name: auth-service
+    volumes:
+      - ./auth-service:/app
+    ports:
+      - "8001:8001"
+    depends_on:
+      - auth-db
+      - test-ldap
+    environment:
+      - DB_HOST=auth-db
+      - DB_PORT=5432
+      - DB_NAME=auth_db
+      - DB_USER=ooredoo_user
+      - DB_PASSWORD=ooredoo_pass
+      - LDAP_SERVER_URI=ldap://test-ldap:389
+      - LDAP_BASE_DN=ou=people,dc=ooredoo-test,dc=local
+      - LDAP_BIND_DN=cn=admin,dc=ooredoo-test,dc=local
+      - LDAP_BIND_PASSWORD=admin123
+      - LDAP_USER_ID_ATTRIBUTE=uid
+      - LDAP_EMAIL_ATTRIBUTE=mail
+
+volumes:
+  auth_db_data:
