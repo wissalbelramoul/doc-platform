@@ -1,0 +1,10 @@
+Django>=4.2,<5.0
+djangorestframework>=3.14,<4.0
+psycopg2-binary>=2.9
+django-treebeard>=4.7
+pika>=1.3
+djangorestframework-simplejwt>=5.3   # Vérification JWT RS256 (auth-service)
+cryptography>=41.0                   # Backend RSA pour RS256
+python-dotenv>=1.0
+gunicorn>=21.0        # WSGI HTTP Server pour production
+
